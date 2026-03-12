@@ -5,6 +5,16 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.2.0] - 2026-03-12
+
+### Added
+- **ASCII Latency History Chart**: Added an inline sparkline plot using `asciigraph` to the terminal UI that visually tracks latency history.
+- **System Tray Integration**: Added a cross-platform system tray icon using `getlantern/systray`.
+  - Displays live Latency and Jitter metrics clearly using Unicode mathematical bold characters directly in the menu bar.
+  - Interactive dropdown showing the most recent network event (log) and the top bandwidth-consuming application.
+- **Background Daemon Mode**: Added a `-bg` (or `-b`) flag.
+  - Completely detaches the application from the host terminal, running silently as a background process while continuing to update the system tray.
+
 ## [1.1.0] - 2026-03-12
 
 ### Added

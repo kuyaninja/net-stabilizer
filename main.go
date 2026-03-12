@@ -6,12 +6,17 @@ import (
 	"io"
 	"log"
 	"os"
+	"os/exec"
+	"regexp"
 	"strings"
 	"sync"
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/getlantern/systray"
+	"github.com/guptarohit/asciigraph"
+	"kuyaninja/net-stabilizer/trayicon"
 )
 
 // --- Styles ---
@@ -55,9 +60,10 @@ type model struct {
 	logs         []string
 	badChecks    int
 	lastReset    time.Time
-	windowHeight int
-	windowWidth  int
-	topApps      string
+	windowHeight  int
+	windowWidth   int
+	topApps       string
+	latencyHistory []float64
 }
 
 type pingMsg Metrics
@@ -99,11 +105,27 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	case pingMsg:
 		m.metrics = Metrics(msg)
 		m.processMetrics()
+		// keep history of past 60 pings max
+		m.latencyHistory = append(m.latencyHistory, float64(m.metrics.Latency.Milliseconds()))
+		if len(m.latencyHistory) > 60 {
+			m.latencyHistory = m.latencyHistory[1:]
+		}
+		var lastLog string
+		if len(m.logs) > 0 {
+			// Strip the lipgloss color codes from the log string before sending to OS Tray
+			lastLog = lipgloss.NewStyle().Render(m.logs[len(m.logs)-1])
+		}
+		updateTrayDetails(m.metrics, m.topApps, lastLog)
 		return m, tea.Tick(2*time.Second, func(t time.Time) tea.Msg {
 			return doPing(m.targetIP)()
 		})
 	case bwMsg:
 		m.topApps = string(msg)
+		var lastLog string
+		if len(m.logs) > 0 {
+			lastLog = lipgloss.NewStyle().Render(m.logs[len(m.logs)-1])
+		}
+		updateTrayDetails(m.metrics, m.topApps, lastLog)
 		return m, doBandwidthCheck()
 	case errMsg:
 		m.addLog(alertStyle.Render(fmt.Sprintf("Ping error: %v", msg)))
@@ -213,6 +235,15 @@ func (m model) View() string {
 		bwText = "Calculating Bandwidth..."
 	}
 	s.WriteString(lipgloss.PlaceHorizontal(m.windowWidth, lipgloss.Center, logStyle.Render(bwText)))
+	s.WriteString("\n\n")
+
+	// Chart
+	if len(m.latencyHistory) > 0 {
+		graph := asciigraph.Plot(m.latencyHistory, asciigraph.Height(8), asciigraph.Width(50), asciigraph.Caption("Latency History (ms)"))
+		s.WriteString(lipgloss.PlaceHorizontal(m.windowWidth, lipgloss.Center, graph))
+	} else {
+		s.WriteString(lipgloss.PlaceHorizontal(m.windowWidth, lipgloss.Center, logStyle.Render("Waiting for ping data to draw chart...")))
+	}
 
 	return lipgloss.PlaceVertical(m.windowHeight, lipgloss.Center, s.String())
 }
@@ -267,6 +298,86 @@ func findBestTarget(targets []string) string {
 	return bestTarget
 }
 
+// Global elements for systray
+var mItemLat *systray.MenuItem
+var mItemApp *systray.MenuItem
+var mItemLog *systray.MenuItem
+var program *tea.Program
+
+// toBoldFont converts ascii numbers to Unicode Mathematical Bold Sans-Serif digits
+func toBoldFont(s string) string {
+	var result strings.Builder
+	for _, r := range s {
+		if r >= '0' && r <= '9' {
+			// Mathematical sans-serif bold digit 0 is U+1D7EC
+			result.WriteRune(rune(0x1D7EC + (r - '0')))
+		} else {
+			result.WriteRune(r)
+		}
+	}
+	return result.String()
+}
+
+// ansiRegex removes terminal styling codes before parsing output to system tray
+var ansiRegex = regexp.MustCompile("\x1b\\[[0-9;]*m")
+
+func stripANSI(str string) string {
+	return ansiRegex.ReplaceAllString(str, "")
+}
+
+func updateTrayDetails(metrics Metrics, topApps string, lastLog string) {
+	if mItemLat != nil {
+		status := "DOWN"
+		if metrics.IsUp {
+			latStr := fmt.Sprintf("L:%dms J:%dms", metrics.Latency.Milliseconds(), metrics.Jitter.Milliseconds())
+			status = toBoldFont(latStr)
+		}
+		systray.SetTitle(status)
+		systray.SetTooltip(fmt.Sprintf("Net-Stabilizer: %s", status))
+		mItemLat.SetTitle(fmt.Sprintf("Metrics: %s", status))
+	}
+	if mItemApp != nil && topApps != "" {
+		mItemApp.SetTitle(fmt.Sprintf("Top: %s", topApps))
+	}
+	if mItemLog != nil && lastLog != "" {
+		// Attempt to strip ANSI codes added by lipgloss before giving to OS 
+		// (A simple approach since OS menus don't render terminal colors)
+		cleanLog := stripANSI(lastLog)
+		mItemLog.SetTitle(cleanLog)
+	}
+}
+
+func onTrayReady() {
+	systray.SetIcon(trayicon.Data)
+	systray.SetTitle("--")
+	systray.SetTooltip("Network Stabilizer")
+	
+	mItemLat = systray.AddMenuItem("Current Latency: --", "Live Latency")
+	mItemLat.Disable()
+	
+	mItemApp = systray.AddMenuItem("Top: --", "Top bandwidth application")
+	mItemApp.Disable()
+
+	mItemLog = systray.AddMenuItem("Log: --", "Most recent status event")
+	mItemLog.Disable()
+
+	systray.AddSeparator()
+	mQuit := systray.AddMenuItem("Quit", "Quit the whole app")
+
+	go func() {
+		<-mQuit.ClickedCh
+		systray.Quit()
+		if program != nil {
+			program.Quit()
+		}
+		os.Exit(0)
+	}()
+}
+
+func onTrayExit() {
+	// cleanup if necessary
+}
+
 func main() {
 	var profileName string
 	var targetIP string
@@ -274,6 +385,13 @@ func main() {
 	flag.StringVar(&profileName, "p", "Browsing", "Activity profile (alias)")
 	flag.StringVar(&targetIP, "target", "auto", "Target IP (default 'auto' scans best DNS)")
 	flag.StringVar(&targetIP, "t", "auto", "Target IP (short)")
+	var backgroundMode bool
+	flag.BoolVar(&backgroundMode, "bg", false, "Run in background (system tray only)")
+	flag.BoolVar(&backgroundMode, "b", false, "Run in background (alias)")
+	
+	var isChild bool
+	flag.BoolVar(&isChild, "child", false, "Internal flag used for background daemon")
+
 	flag.Parse()
 
 	// Normalize profileName to Title Case (e.g., "gaming" -> "Gaming")
@@ -299,15 +417,91 @@ func main() {
 		targetIP:  targetIP,
 		logs:      []string{},
 		lastReset: time.Now().Add(-5 * time.Minute),
+		latencyHistory: []float64{},
 	}
 
 	// Disable standard logger to prevent background libraries (like go-ping)
 	// from printing errors that corrupt the Bubble Tea UI.
 	log.SetOutput(io.Discard)
 
-	p := tea.NewProgram(m, tea.WithAltScreen())
-	if _, err := p.Run(); err != nil {
-		fmt.Printf("Alas, there's been an error: %v\n", err)
-		os.Exit(1)
+	if backgroundMode && !isChild {
+		// Parent process: spawn child and exit
+		args := []string{}
+		for _, arg := range os.Args[1:] {
+			if arg != "-bg" && arg != "-b" { // strip the bg flags
+				args = append(args, arg)
+			}
+		}
+		args = append(args, "-child")
+		
+		cmd := exec.Command(os.Args[0], args...)
+		err := cmd.Start()
+		if err != nil {
+			fmt.Printf("❌ Failed to start background process: %v\n", err)
+			os.Exit(1)
+		}
+		fmt.Printf("🚀 Net-Stabilizer started in background! (PID: %d)\n", cmd.Process.Pid)
+		fmt.Println("Check your System Tray for the icon. You can now close this terminal.")
+		os.Exit(0)
+	}
+
+	if isChild {
+		// Run headless daemon
+		go func() {
+			tickPing := time.NewTicker(2 * time.Second)
+			tickBw := time.NewTicker(2 * time.Second)
+			defer tickPing.Stop()
+			defer tickBw.Stop()
+
+			for {
+				select {
+				case <-tickPing.C:
+					go func() {
+						metrics, err := Measure(m.targetIP, 3, 3*time.Second)
+						if err == nil {
+							m.metrics = metrics
+							m.processMetrics()
+							m.latencyHistory = append(m.latencyHistory, float64(metrics.Latency.Milliseconds()))
+							if len(m.latencyHistory) > 60 {
+								m.latencyHistory = m.latencyHistory[1:]
+							}
+							
+							var lastLog string
+							if len(m.logs) > 0 {
+								lastLog = lipgloss.NewStyle().Render(m.logs[len(m.logs)-1])
+							}
+							updateTrayDetails(m.metrics, m.topApps, lastLog)
+						}
+					}()
+				case <-tickBw.C:
+					go func() {
+						m.topApps = GetTopBandwidthHogs()
+						var lastLog string
+						if len(m.logs) > 0 {
+							lastLog = lipgloss.NewStyle().Render(m.logs[len(m.logs)-1])
+						}
+						updateTrayDetails(m.metrics, m.topApps, lastLog)
+					}()
+				}
+			}
+		}()
+
+		// Start systray blocking the main thread
+		systray.Run(onTrayReady, onTrayExit)
+	} else {
+		program = tea.NewProgram(m, tea.WithAltScreen())
+
+		go func() {
+			if _, err := program.Run(); err != nil {
+				fmt.Printf("Alas, there's been an error: %v\n", err)
+				os.Exit(1)
+			}
+			// When TUI quits, quit systray
+			systray.Quit()
+			os.Exit(0)
+		}()
+
+		// Start systray blocking the main thread 
+		systray.Run(onTrayReady, onTrayExit)
 	}
 }
