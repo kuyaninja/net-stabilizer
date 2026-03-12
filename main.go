@@ -239,8 +239,10 @@ func (m model) View() string {
 
 	// Chart
 	if len(m.latencyHistory) > 0 {
-		graph := asciigraph.Plot(m.latencyHistory, asciigraph.Height(8), asciigraph.Width(50), asciigraph.Caption("Latency History (ms)"))
-		s.WriteString(lipgloss.PlaceHorizontal(m.windowWidth, lipgloss.Center, graph))
+		graph := asciigraph.Plot(m.latencyHistory, asciigraph.Height(8), asciigraph.Caption("Latency History (ms)"))
+		// Align left to normalize line lengths so Center doesn't stagger them
+		graphBlock := lipgloss.NewStyle().Align(lipgloss.Left).Render(graph)
+		s.WriteString(lipgloss.PlaceHorizontal(m.windowWidth, lipgloss.Center, graphBlock))
 	} else {
 		s.WriteString(lipgloss.PlaceHorizontal(m.windowWidth, lipgloss.Center, logStyle.Render("Waiting for ping data to draw chart...")))
 	}
