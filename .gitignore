@@ -1,0 +1,17 @@
+# Binaries
+net-stabilizer
+net-stabilizer.exe
+*.test
+*.exe
+
+# Local Go Environment (Seatbelt workaround)
+.go/
+.modcache/
+.modcache*/
+
+# OS-specific files
+.DS_Store
+Thumbs.db
+
+# Go dependencies (optional, but good to have)
+vendor/
