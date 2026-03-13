@@ -2,6 +2,7 @@
 package main
 
 import (
+	"runtime"
 	"time"
 
 	"github.com/go-ping/ping"
@@ -29,7 +30,12 @@ func Measure(targetIP string, count int, timeout time.Duration) (Metrics, error)
 	pinger.Timeout = timeout
 	
 	// SetPrivileged(false) uses UDP pings which work without root on many systems.
-	pinger.SetPrivileged(false)
+	// On Windows, privileged is required to use ICMP raw sockets unless specific registry settings are in place.
+	if runtime.GOOS == "windows" {
+		pinger.SetPrivileged(true)
+	} else {
+		pinger.SetPrivileged(false)
+	}
 
 	err = pinger.Run()
 	if err != nil {
