@@ -7,6 +7,7 @@ require (
 	github.com/charmbracelet/lipgloss v1.1.0
 	github.com/getlantern/systray v1.2.2
 	github.com/go-ping/ping v1.2.0
+	github.com/gofrs/flock v0.13.0
 	github.com/guptarohit/asciigraph v0.8.1
 	github.com/shirou/gopsutil/v3 v3.24.5
 )

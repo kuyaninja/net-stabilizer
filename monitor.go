@@ -28,7 +28,7 @@ func Measure(targetIP string, count int, timeout time.Duration) (Metrics, error)
 
 	pinger.Count = count
 	pinger.Timeout = timeout
-	
+
 	// SetPrivileged(false) uses UDP pings which work without root on many systems.
 	// On Windows, privileged is required to use ICMP raw sockets unless specific registry settings are in place.
 	if runtime.GOOS == "windows" {

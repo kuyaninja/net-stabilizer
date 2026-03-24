@@ -83,7 +83,7 @@ func GetTopBandwidthHogs() string {
 		if last, ok := lastStats[p.Pid]; ok {
 			deltaSent := sent - last.BytesSent
 			deltaRecv := recv - last.BytesRecv
-			
+
 			// Protect against counter resets
 			if sent >= last.BytesSent && recv >= last.BytesRecv {
 				totalDelta := deltaSent + deltaRecv
@@ -132,7 +132,7 @@ func formatGlobalNet(current net.IOCountersStat) string {
 	duration := now.Sub(lastGlobalTime).Seconds()
 	deltaSent := current.BytesSent - lastGlobalNet.BytesSent
 	deltaRecv := current.BytesRecv - lastGlobalNet.BytesRecv
-	
+
 	lastGlobalNet = current
 	lastGlobalTime = now
 

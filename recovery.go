@@ -26,7 +26,7 @@ func FlushDNS() error {
 	default:
 		return fmt.Errorf("unsupported OS: %s", runtime.GOOS)
 	}
-	
+
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		return fmt.Errorf("flush dns failed: %s (output: %s)", err, string(output))

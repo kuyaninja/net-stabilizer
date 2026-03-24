@@ -7,6 +7,7 @@ import (
 	"log"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
 	"strings"
 	"sync"
@@ -15,6 +16,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/getlantern/systray"
+	"github.com/gofrs/flock"
 	"github.com/guptarohit/asciigraph"
 	"kuyaninja/net-stabilizer/trayicon"
 )
@@ -54,15 +56,15 @@ var (
 
 // --- Model ---
 type model struct {
-	profile      Profile
-	targetIP     string
-	metrics      Metrics
-	logs         []string
-	badChecks    int
-	lastReset    time.Time
-	windowHeight  int
-	windowWidth   int
-	topApps       string
+	profile        Profile
+	targetIP       string
+	metrics        Metrics
+	logs           []string
+	badChecks      int
+	lastReset      time.Time
+	windowHeight   int
+	windowWidth    int
+	topApps        string
 	latencyHistory []float64
 }
 
@@ -225,7 +227,7 @@ func (m model) View() string {
 		m.metrics.Jitter.Truncate(time.Millisecond),
 		m.metrics.PacketLoss,
 	)
-	
+
 	footer := statusStyle.Render(status) + " " + logStyle.Render("press 'q' to quit")
 	s.WriteString(lipgloss.PlaceHorizontal(m.windowWidth, lipgloss.Center, footer))
 	s.WriteString("\n")
@@ -342,7 +344,7 @@ func updateTrayDetails(metrics Metrics, topApps string, lastLog string) {
 		mItemApp.SetTitle(fmt.Sprintf("Top: %s", topApps))
 	}
 	if mItemLog != nil && lastLog != "" {
-		// Attempt to strip ANSI codes added by lipgloss before giving to OS 
+		// Attempt to strip ANSI codes added by lipgloss before giving to OS
 		// (A simple approach since OS menus don't render terminal colors)
 		cleanLog := stripANSI(lastLog)
 		mItemLog.SetTitle(cleanLog)
@@ -353,10 +355,10 @@ func onTrayReady() {
 	systray.SetIcon(trayicon.Data)
 	systray.SetTitle("--")
 	systray.SetTooltip("Network Stabilizer")
-	
+
 	mItemLat = systray.AddMenuItem("Current Latency: --", "Live Latency")
 	mItemLat.Disable()
-	
+
 	mItemApp = systray.AddMenuItem("Top: --", "Top bandwidth application")
 	mItemApp.Disable()
 
@@ -390,11 +392,25 @@ func main() {
 	var backgroundMode bool
 	flag.BoolVar(&backgroundMode, "bg", false, "Run in background (system tray only)")
 	flag.BoolVar(&backgroundMode, "b", false, "Run in background (alias)")
-	
+
 	var isChild bool
 	flag.BoolVar(&isChild, "child", false, "Internal flag used for background daemon")
 
 	flag.Parse()
+
+	lockFilePath := filepath.Join(os.TempDir(), "net-stabilizer.lock")
+	fileLock := flock.New(lockFilePath)
+
+	locked, err := fileLock.TryLock()
+	if err != nil {
+		fmt.Printf("❌ Failed to acquire lock: %v\n", err)
+		os.Exit(1)
+	}
+	if !locked {
+		fmt.Println("❌ Another instance of net-stabilizer is already running.")
+		os.Exit(1)
+	}
+	defer fileLock.Unlock()
 
 	// Normalize profileName to Title Case (e.g., "gaming" -> "Gaming")
 	profileName = strings.Title(strings.ToLower(profileName))
@@ -415,10 +431,10 @@ func main() {
 	}
 
 	m := model{
-		profile:   profile,
-		targetIP:  targetIP,
-		logs:      []string{},
-		lastReset: time.Now().Add(-5 * time.Minute),
+		profile:        profile,
+		targetIP:       targetIP,
+		logs:           []string{},
+		lastReset:      time.Now().Add(-5 * time.Minute),
 		latencyHistory: []float64{},
 	}
 
@@ -435,7 +451,7 @@ func main() {
 			}
 		}
 		args = append(args, "-child")
-		
+
 		cmd := exec.Command(os.Args[0], args...)
 		err := cmd.Start()
 		if err != nil {
@@ -467,7 +483,7 @@ func main() {
 							if len(m.latencyHistory) > 60 {
 								m.latencyHistory = m.latencyHistory[1:]
 							}
-							
+
 							var lastLog string
 							if len(m.logs) > 0 {
 								lastLog = lipgloss.NewStyle().Render(m.logs[len(m.logs)-1])
@@ -503,7 +519,7 @@ func main() {
 			os.Exit(0)
 		}()
 
-		// Start systray blocking the main thread 
+		// Start systray blocking the main thread
 		systray.Run(onTrayReady, onTrayExit)
 	}
 }
