@@ -5,6 +5,15 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [1.3.0] - 2026-03-24
+
+### Added
+- **Single Instance Restriction**: Integrated `gofrs/flock` to ensure only one instance of `net-stabilizer` can run at a time. This prevents conflicting operations, duplicate tray icons, and overlapping background processes.
+- **Unit Testing**: Added `TestSingleInstanceLocking` to verify file locking behavior and ensure reliable instance management.
+
+### Changed
+- **Dependencies**: Added `github.com/gofrs/flock` to the project.
+
 ## [1.2.0] - 2026-03-12
 
 ### Added
